@@ -56,9 +56,9 @@ export class GameClient {
   constructor(
     private readonly conn: Connection,
     private readonly me: string,
-    container: HTMLElement,
+    world: World,
   ) {
-    this.world = new World(container);
+    this.world = world;
     this.input = new InputController(this.world.canvas);
     conn.onSnapshot((s) => this.onSnapshot(s));
     conn.onEvent((e) => this.onEvent(e));
@@ -116,17 +116,40 @@ export class GameClient {
   private onEvent(e: GameEvent): void {
     const now = performance.now();
     if (e.type === "shot") {
-      this.world.addTracer(e.from, e.to, e.weapon, now);
-      if (e.shooterId === this.me && e.hitId && e.damage > 0) this.hud.hit();
-      if (e.hitId === this.me && e.damage > 0) this.hud.hurt();
+      this.world.shot(e, e.shooterId === this.me, now);
+      if (e.shooterId === this.me && e.hitId && e.damage > 0) this.hud.hit(e.weapon === "lance");
+      if (e.hitId === this.me && e.damage > 0) {
+        this.hud.hurt(this.bearingTo(e.from));
+        this.world.hurt(now);
+      }
     } else if (e.type === "elim") {
-      const how = e.weapon === "lance" ? "lanced" : "dropped";
-      this.hud.killFeed(`${this.nameOf(e.killerId)} ${how} ${this.nameOf(e.victimId)}`);
+      const victim = this.latest?.players.find((p) => p.userId === e.victimId);
+      const at = e.victimId === this.me && this.body ? this.body : victim ? { x: victim.x, y: victim.y, z: victim.z } : null;
+      this.world.elimination(at, e.weapon, e.killerId === this.me || e.victimId === this.me, now);
+      this.hud.killFeed({
+        killer: this.nameOf(e.killerId),
+        victim: this.nameOf(e.victimId),
+        killerSeat: this.seatOf(e.killerId),
+        victimSeat: this.seatOf(e.victimId),
+        lance: e.weapon === "lance",
+        mine: e.killerId === this.me || e.victimId === this.me,
+      });
     } else if (e.type === "lancePickup") {
-      this.hud.killFeed(`${this.nameOf(e.holderId)} took the Auric Lance`);
+      this.hud.notice(`${this.nameOf(e.holderId)} took the Auric Lance`, true);
     } else if (e.type === "notice") {
-      this.hud.killFeed(e.text);
+      this.hud.notice(e.text, false);
     }
+  }
+
+  /** Screen bearing (radians, 0 = ahead, positive = to the right) from the local player to a point. */
+  private bearingTo(p: { x: number; z: number }): number | null {
+    if (!this.body) return null;
+    const dx = p.x - this.body.x;
+    const dz = p.z - this.body.z;
+    const yaw = this.input.yaw;
+    const fwd = -Math.sin(yaw) * dx - Math.cos(yaw) * dz;
+    const right = Math.cos(yaw) * dx - Math.sin(yaw) * dz;
+    return Math.atan2(right, fwd);
   }
 
   private frame(): void {
@@ -150,7 +173,12 @@ export class GameClient {
 
     if (playing && this.body && mine) {
       const eye = eyePosition({ x: this.body.x + this.offset.x, y: this.body.y + this.offset.y, z: this.body.z + this.offset.z });
-      this.world.render(eye, this.input.yaw, this.input.pitch, mine.weapon, mine.alive, now);
+      this.world.render(eye, this.input.yaw, this.input.pitch, mine.weapon, mine.alive, now, {
+        reloading: mine.reloading,
+        charging: mine.charging,
+        grounded: this.body.grounded,
+        vy: this.body.vy,
+      });
       const respawnIn = mine.alive || this.deadSince === null ? null : Math.max(0, 2500 - (now - this.deadSince));
       if (s) this.hud.update(s, this.me, mine, this.input.locked, respawnIn, this.nameOf);
       this.hud.show(s?.phase === "live");
@@ -188,7 +216,8 @@ export class GameClient {
       this.conn.send("input", cmd);
     }
     if (this.pending.length > 240) this.pending.splice(0, this.pending.length - 240);
-    if (intent.fire && canMove && !mine.reloading && (mine.weapon === "lance" || mine.ammo > 0)) {
+    // Kestrel kicks on press; the Lance kicks when its beam event arrives after the charge.
+    if (intent.fire && canMove && !mine.reloading && mine.weapon === "kestrel" && mine.ammo > 0) {
       this.world.localFire(performance.now(), mine.weapon);
     }
   }
@@ -213,7 +242,7 @@ export class GameClient {
     for (const p of s.players) {
       if (p.userId === this.me) {
         const eye = this.body ? eyePosition(this.body) : null;
-        this.world.setTelegraph(p.userId, p.charging ? eye : null, p.charging ? viewDirection(this.input.yaw, this.input.pitch) : null, now / 1000);
+        this.world.setTelegraph(p.userId, p.charging ? eye : null, p.charging ? viewDirection(this.input.yaw, this.input.pitch) : null);
         continue;
       }
       const pa = a?.s.players.find((x) => x.userId === p.userId);
@@ -223,9 +252,9 @@ export class GameClient {
           ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), z: lerp(pa.z, pb.z, t), yaw: lerpAngle(pa.yaw, pb.yaw, t) }
           : { x: p.x, y: p.y, z: p.z, yaw: p.yaw };
       const view = pb ?? p;
-      this.world.placeAvatar(p.userId, pos, view.alive, view.invulnerable, view.weapon);
+      this.world.placeAvatar(p.userId, pos, view.alive, view.invulnerable, view.weapon, p.charging);
       const eye = eyePosition(pos);
-      this.world.setTelegraph(p.userId, p.charging ? eye : null, p.charging ? viewDirection(p.yaw, p.pitch) : null, now / 1000);
+      this.world.setTelegraph(p.userId, p.charging ? eye : null, p.charging ? viewDirection(p.yaw, p.pitch) : null);
     }
   }
 

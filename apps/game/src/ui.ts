@@ -102,8 +102,8 @@ export class TableOverlay {
   countdown(s: Snapshot): void {
     this.root.classList.remove("hidden");
     this.root.classList.add("clear");
-    this.set(`<div><div class="sub display" style="text-align:center">Pot locked · ${s.pot} PC</div>
-      <div class="big display" data-testid="countdown">${secondsLeft(s.countdownEndsAt, s.serverTime)}</div></div>`);
+    this.set(`<div class="countdown-wrap"><div class="sub">Pot locked · ${s.pot} PC · first to ${GILT_ROUND.scoreToWin}</div>
+      <div class="big" data-testid="countdown">${secondsLeft(s.countdownEndsAt, s.serverTime)}</div><div class="rule"></div></div>`);
   }
 
   result(r: MatchResult, me: string): void {
@@ -122,7 +122,7 @@ export class TableOverlay {
         }</span><span class="display">${s.score} elim${s.score === 1 ? "" : "s"}</span></li>`,
       )
       .join("");
-    this.set(`<div class="panel" data-testid="result">
+    this.set(`<div class="panel result-panel" data-testid="result">
       <h1 class="display ${won ? "win" : "loss"}">${headline}</h1>
       <div class="sub">${reason} · pot ${r.potTotal} PC</div>
       <div class="payout display ${mine > 0 ? "win" : "loss"}" data-testid="payout">${mine > 0 ? `+${mine} PC` : "+0 PC"}</div>
