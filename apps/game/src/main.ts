@@ -3,6 +3,7 @@ import { isAntePreset, type Snapshot } from "@potlock/shared";
 import { GameClient } from "./game.js";
 import { connect, type Connection, type TableTarget } from "./net.js";
 import { TableOverlay } from "./ui.js";
+import { World } from "./world.js";
 
 function readTarget(): { target: TableTarget; token: string } | null {
   const params = new URLSearchParams(window.location.search);
@@ -53,11 +54,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const game = new GameClient(conn, me, document.body);
-  if (import.meta.env.DEV) {
-    (window as unknown as { __potlock: ReturnType<GameClient["debugApi"]> }).__potlock = game.debugApi();
-  }
-
   let ended = false;
   let latest: Snapshot | null = null;
   conn.onSnapshot((s) => {
@@ -80,6 +76,15 @@ async function main(): Promise<void> {
   conn.onClose((code) => {
     if (!ended) overlay.message("Disconnected", code === 4000 ? "You were removed from the table." : "The connection to the table closed.");
   });
+
+  // Show the table first, then build the 3D scene (texture baking takes a moment) behind it.
+  const seated = conn;
+  await new Promise<void>((resolve) => seated.onSnapshot(() => resolve()));
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  const game = new GameClient(seated, me, await World.create(document.body));
+  if (import.meta.env.DEV) {
+    (window as unknown as { __potlock: ReturnType<GameClient["debugApi"]> }).__potlock = game.debugApi();
+  }
 }
 
 void main();

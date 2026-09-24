@@ -114,6 +114,7 @@ export function startPreview(): void {
     },
     fire: () => world.localFire(performance.now(), "kestrel"),
     stats: () => world.stats(),
+    programs: () => (world.renderer.info.programs ?? []).map((p) => `${p.name}:${p.cacheKey}`),
     ready: false,
   };
   (window as unknown as { __preview: typeof api }).__preview = api;

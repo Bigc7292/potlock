@@ -36,6 +36,20 @@ interface Stride {
  * weapons, pedestal and VFX. It reads snapshots and events; it never decides hits,
  * scores or money.
  */
+interface Prebuilt {
+  quality: QualitySettings;
+  materials: MaterialLibrary;
+  level: Level;
+}
+
+function anisotropyFor(q: QualitySettings): number {
+  return q.level === "low" ? 2 : 8;
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 export class World {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -75,15 +89,31 @@ export class World {
   private flareCheckAt = 0;
   private flareVisible = true;
 
-  constructor(container: HTMLElement) {
-    this.quality = settingsFor(initialQuality());
+  /**
+   * Builds the scene in slices, yielding between the heavy ones (texture baking, the level,
+   * shader compiles) so the table screen stays responsive while Drydock 09 loads behind it.
+   */
+  static async create(container: HTMLElement): Promise<World> {
+    const quality = settingsFor(initialQuality());
+    await nextFrame();
+    const materials = buildMaterials(quality.level, 24, 16);
+    await nextFrame();
+    const level = buildLevel(materials, anisotropyFor(quality));
+    await nextFrame();
+    const world = new World(container, { quality, materials, level });
+    await world.warmUp(true);
+    return world;
+  }
+
+  constructor(container: HTMLElement, prebuilt?: Prebuilt) {
+    this.quality = prebuilt?.quality ?? settingsFor(initialQuality());
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false, depth: true });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Materials render linear HDR into the composer; the grade pass applies ACES filmic.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.renderer.info.autoReset = false;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = this.quality.shadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
@@ -98,9 +128,8 @@ export class World {
     this.viewCamera.layers.set(1);
     this.scene.add(this.camera, this.viewCamera);
 
-    const aniso = this.quality.level === "low" ? 2 : 8;
-    this.materials = buildMaterials(this.quality.level, 24, 16);
-    this.level = buildLevel(this.materials, aniso);
+    this.materials = prebuilt?.materials ?? buildMaterials(this.quality.level, 24, 16);
+    this.level = prebuilt?.level ?? buildLevel(this.materials, anisotropyFor(this.quality));
     this.scene.add(this.level.group);
 
     const ped = DRYDOCK_09.lancePedestal;
@@ -141,7 +170,7 @@ export class World {
     });
     this.lights.moon.shadow.needsUpdate = true;
     this.resize();
-    this.warmUp();
+    if (!prebuilt) void this.warmUp(false);
     window.addEventListener("resize", () => this.resize());
   }
 
@@ -150,7 +179,7 @@ export class World {
   }
 
   /** Compile every program (avatars, Lance, beams, cones) up front so combat never hitches. */
-  private warmUp(): void {
+  private async warmUp(parallel: boolean): Promise<void> {
     const warm = new THREE.Group();
     const probe = new Avatar(this.materials, 0, "warm");
     probe.update({ x: 0, y: 0, z: 0, yaw: 0 }, true, true, "lance", false, 0, 0.016);
@@ -163,10 +192,22 @@ export class World {
         o.visible = true;
       }
     });
-    this.renderer.compile(this.scene, this.camera);
-    this.renderer.compile(this.scene, this.viewCamera);
+    // Every frame renders into the composer's linear buffers, so compile that variant
+    // (linear output, no tone mapping) rather than the canvas one.
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+    const prev = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(target);
+    // compileAsync issues every compile synchronously, then waits for the driver to link.
+    const linked = parallel ? [this.renderer.compileAsync(this.scene, this.camera), this.renderer.compileAsync(this.scene, this.viewCamera)] : [];
+    if (!parallel) {
+      this.renderer.compile(this.scene, this.camera);
+      this.renderer.compile(this.scene, this.viewCamera);
+    }
+    this.renderer.setRenderTarget(prev);
     for (const o of hidden) o.visible = false;
     this.scene.remove(warm);
+    await Promise.all(linked);
+    target.dispose();
     probe.dispose();
   }
 
@@ -334,6 +375,8 @@ export class World {
   // ---------- frame ----------
 
   render(eye: Vec3, yaw: number, pitch: number, weapon: WeaponId, showViewModel: boolean, now: number, local?: LocalView): void {
+    // No graphics card: redraw a few times a second so input and prediction stay real-time.
+    if (this.quality.minFrameMs > 0 && now - this.lastRender < this.quality.minFrameMs) return;
     const dt = Math.min(0.1, Math.max(0.001, (now - this.lastRender) / 1000));
     this.frameDt = dt;
     this.lastRender = now;

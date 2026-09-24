@@ -15,27 +15,49 @@ export interface QualitySettings {
   ssao: boolean;
   smaa: boolean;
   shadowMapSize: number;
+  /**
+   * Minimum gap between rendered frames. 0 on real GPUs. On a software rasteriser (no
+   * graphics card) each frame is so slow that input and prediction would crawl, so the
+   * scene redraws a few times a second while input keeps flowing every frame.
+   */
+  minFrameMs: number;
+  /** Real-time shadow map (off only in the software fallback). */
+  shadows: boolean;
 }
 
 const STORE_KEY = "potlock.quality";
 
-export function settingsFor(level: QualityLevel): QualitySettings {
+function baseSettings(level: QualityLevel): QualitySettings {
   switch (level) {
     case "high":
-      return { level, renderScale: 1, maxPixelRatio: 1.5, bloom: true, ssao: true, smaa: true, shadowMapSize: 2048 };
+      return { level, renderScale: 1, maxPixelRatio: 1.5, bloom: true, ssao: true, smaa: true, shadowMapSize: 2048, minFrameMs: 0, shadows: true };
     case "mid":
-      return { level, renderScale: 1, maxPixelRatio: 1, bloom: true, ssao: false, smaa: true, shadowMapSize: 2048 };
+      return { level, renderScale: 1, maxPixelRatio: 1, bloom: true, ssao: false, smaa: true, shadowMapSize: 2048, minFrameMs: 0, shadows: true };
     case "low":
-      return { level, renderScale: 0.75, maxPixelRatio: 1, bloom: false, ssao: false, smaa: false, shadowMapSize: 1024 };
+      return { level, renderScale: 0.75, maxPixelRatio: 1, bloom: false, ssao: false, smaa: false, shadowMapSize: 1024, minFrameMs: 0, shadows: true };
   }
+}
+
+export function settingsFor(level: QualityLevel): QualitySettings {
+  const s = baseSettings(level);
+  // An explicit ?q= (screenshots, testing a level) opts out of the software fallback.
+  const forced = new URLSearchParams(window.location.search).has("q");
+  return softwareRenderer() && !forced ? { ...s, renderScale: Math.min(s.renderScale, 0.4), minFrameMs: 200, shadows: false } : s;
 }
 
 function isLevel(v: string | null): v is QualityLevel {
   return v === "low" || v === "mid" || v === "high";
 }
 
-/** Software rasterisers (headless test browsers, blocklisted GPUs) start on low. */
-function softwareRenderer(): boolean {
+let software: boolean | null = null;
+
+/** Software rasterisers (headless test browsers, blocklisted GPUs) start on low. Checked once. */
+export function softwareRenderer(): boolean {
+  software ??= detectSoftware();
+  return software;
+}
+
+function detectSoftware(): boolean {
   try {
     const gl = document.createElement("canvas").getContext("webgl2");
     if (!gl) return true;

@@ -56,9 +56,9 @@ export class GameClient {
   constructor(
     private readonly conn: Connection,
     private readonly me: string,
-    container: HTMLElement,
+    world: World,
   ) {
-    this.world = new World(container);
+    this.world = world;
     this.input = new InputController(this.world.canvas);
     conn.onSnapshot((s) => this.onSnapshot(s));
     conn.onEvent((e) => this.onEvent(e));
