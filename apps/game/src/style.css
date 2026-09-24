@@ -36,3 +36,33 @@ a.link { color: var(--rivet); font-size: 13px; }
 .payout { font-size: 20px; margin: 8px 0; }
 .win { color: var(--signal); }
 .loss { color: var(--alarm); }
+
+/* ---------- HUD ---------- */
+.hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; font-family: "Chakra Petch", system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.06em; }
+.hud.hidden { display: none; }
+.crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); }
+.crosshair::before, .crosshair::after { content: ""; position: absolute; background: #e8ecf3; }
+.crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; opacity: 0.8; }
+.crosshair::after { top: 10px; left: 0; height: 2px; width: 22px; opacity: 0.8; }
+.hitmark { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%) rotate(45deg); border: 2px solid var(--alarm); opacity: 0; transition: opacity 0.15s; }
+.hitmark.on { opacity: 1; transition: none; }
+.scores { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; }
+.chip { background: rgba(7, 8, 11, 0.7); border: 1px solid var(--plate); border-radius: 6px; padding: 6px 12px; font-size: 15px; white-space: nowrap; }
+.chip.me { border-color: var(--gilt); }
+.chip b { color: var(--gilt); margin-left: 6px; }
+.timer { font-size: 20px; color: var(--gilt); }
+.potchip { color: var(--gilt); }
+.health { position: absolute; left: 20px; bottom: 20px; width: 260px; }
+.health .bar { height: 12px; background: var(--plate); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.health .fill { height: 100%; background: var(--signal); transition: width 0.1s; }
+.ammo { position: absolute; right: 24px; bottom: 20px; text-align: right; font-size: 34px; }
+.ammo small { display: block; font-size: 12px; color: var(--rivet); }
+.lancechip { position: absolute; left: 20px; top: 64px; font-size: 13px; }
+.feed { position: absolute; right: 20px; top: 64px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; font-size: 13px; }
+.feed div { background: rgba(7, 8, 11, 0.7); padding: 4px 10px; border-radius: 4px; }
+.center-msg { position: absolute; left: 50%; top: 32%; transform: translateX(-50%); text-align: center; font-size: 26px; color: var(--alarm); text-shadow: 0 0 12px rgba(0, 0, 0, 0.9); }
+.center-msg small { display: block; font-size: 14px; color: #e8ecf3; margin-top: 6px; }
+.flash { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 77, 94, 0.45)); opacity: 0; transition: opacity 0.3s; }
+.flash.on { opacity: 1; transition: none; }
+.clicktoplay { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); background: rgba(7, 8, 11, 0.8); border: 1px solid var(--gilt); color: var(--gilt); padding: 10px 18px; border-radius: 6px; font-size: 15px; }
+.overlay.clear { background: transparent; pointer-events: none; }

@@ -4,6 +4,7 @@ import {
   GILT_ROUND,
   TICK_MS,
   isAntePreset,
+  parseInputCommand,
   parseReady,
   type GameEvent,
   type JoinOptions,
@@ -14,6 +15,7 @@ import {
 } from "@potlock/shared";
 import { verifyMatchToken } from "./auth.js";
 import { matchDeps } from "./deps.js";
+import { GameSim } from "./sim/GameSim.js";
 import { GiltRoundTable, type Seat } from "./table/GiltRoundTable.js";
 
 interface AuthData {
@@ -33,7 +35,9 @@ export class GiltRoundRoom extends Room {
   override autoDispose = true;
 
   private table!: GiltRoundTable;
+  private sim!: GameSim;
   private tick = 0;
+  private lastStepAt = 0;
   private lastMetadata = "";
 
   override onCreate(options: Partial<JoinOptions>): void {
@@ -51,6 +55,18 @@ export class GiltRoundRoom extends Room {
       },
     );
 
+    this.sim = new GameSim({
+      event: (event) => this.broadcastEvent(event),
+      elimination: (killerId, victimId) => this.table.recordElimination(killerId, victimId),
+    });
+
+    this.onMessage("input", (client: PotlockClient, raw: unknown) => {
+      const auth = client.auth;
+      const cmd = parseInputCommand(raw);
+      if (!auth || !cmd) return;
+      const phase = this.table.phase;
+      if (phase === "countdown" || phase === "live") this.sim.queueInput(auth.userId, cmd);
+    });
     this.onMessage("ready", (client: PotlockClient, raw: unknown) => {
       const msg = parseReady(raw);
       const auth = client.auth;
@@ -89,7 +105,10 @@ export class GiltRoundRoom extends Room {
 
   override onLeave(client: PotlockClient): void {
     const auth = client.auth;
-    if (auth) this.table.leave(auth.userId);
+    if (auth) {
+      this.table.leave(auth.userId);
+      if (this.table.getSeat(auth.userId)?.forfeited) this.sim.remove(auth.userId);
+    }
     this.publishMetadata();
   }
 
@@ -100,7 +119,11 @@ export class GiltRoundRoom extends Room {
 
   private step(): void {
     const now = matchDeps().now();
+    const dt = this.lastStepAt === 0 ? TICK_MS / 1000 : Math.min(0.2, (now - this.lastStepAt) / 1000);
+    this.lastStepAt = now;
     this.table.update(now);
+    const phase = this.table.phase;
+    if (phase === "countdown" || phase === "live") this.sim.update(now, dt);
     this.tick++;
     this.broadcastTyped("snap", this.snapshot());
     this.publishMetadata();
@@ -115,15 +138,19 @@ export class GiltRoundRoom extends Room {
       ante: t.ante,
       pot: t.pot,
       seats: t.seatViews(),
-      players: [],
-      lance: { state: "cooldown", availableAt: 0 },
+      players: t.phase === "waiting" || t.phase === "locked" ? [] : this.sim.snapshotPlayers(matchDeps().now()),
+      lance: this.sim.lanceView(),
       autoLockAt: t.autoLockAt,
       countdownEndsAt: t.countdownEndsAt,
       liveEndsAt: t.liveEndsAt,
     };
   }
 
-  private onPhaseChanged(phase: Phase, _participants: Seat[]): void {
+  private onPhaseChanged(phase: Phase, participants: Seat[]): void {
+    const now = matchDeps().now();
+    if (phase === "countdown") this.sim.spawnAll(participants.filter((p) => !p.forfeited), now);
+    if (phase === "live") this.sim.start(now);
+    if (phase === "ended") this.sim.stop();
     // Once the pot locks, nobody new can join; the room stays until settlement finishes.
     if (phase !== "waiting") {
       void this.lock();

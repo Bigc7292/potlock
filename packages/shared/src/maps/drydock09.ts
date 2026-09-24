@@ -118,10 +118,11 @@ export function yawTowardsCentre(p: Vec3): number {
   return Math.atan2(p.x, p.z);
 }
 
+// The first pair faces off across the open lane; later pairs sit in the quay corners.
 const spawnHalf: SpawnPoint[] = [
+  { x: 10, y: 0, z: 6 },
   { x: -20, y: 0, z: 12 },
   { x: -6.5, y: 0, z: 14.5 },
-  { x: 10, y: 0, z: 6 },
 ].map((position) => ({ position, yaw: yawTowardsCentre(position) }));
 
 function mirrorSpawn(s: SpawnPoint): SpawnPoint {

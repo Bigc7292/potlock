@@ -1,5 +1,6 @@
 import "./style.css";
 import { isAntePreset, type Snapshot } from "@potlock/shared";
+import { GameClient } from "./game.js";
 import { connect, type Connection, type TableTarget } from "./net.js";
 import { TableOverlay } from "./ui.js";
 
@@ -44,6 +45,11 @@ async function main(): Promise<void> {
   } catch (err) {
     overlay.message("Could not sit down", err instanceof Error ? err.message : "The table is unavailable.");
     return;
+  }
+
+  const game = new GameClient(conn, me, document.body);
+  if (import.meta.env.DEV) {
+    (window as unknown as { __potlock: ReturnType<GameClient["debugApi"]> }).__potlock = game.debugApi();
   }
 
   let ended = false;

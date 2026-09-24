@@ -37,18 +37,22 @@ export class TableOverlay {
     this.root.classList.add("hidden");
   }
 
+  private solid(): void {
+    this.root.classList.remove("hidden", "clear");
+  }
+
   setNotice(text: string): void {
     this.notice = text;
   }
 
   message(title: string, body: string): void {
-    this.root.classList.remove("hidden");
+    this.solid();
     this.set(`<div class="panel"><h1 class="display">${esc(title)}</h1><p class="sub">${esc(body)}</p>
       <div class="row"><a class="link" href="${LOBBY_URL}">Back to lobby</a></div></div>`);
   }
 
   table(s: Snapshot, me: string): void {
-    this.root.classList.remove("hidden");
+    this.solid();
     const seat = s.seats.find((x) => x.userId === me);
     const isHost = seat?.isHost ?? false;
     const readyCount = s.seats.filter((x) => x.ready).length;
@@ -97,12 +101,13 @@ export class TableOverlay {
 
   countdown(s: Snapshot): void {
     this.root.classList.remove("hidden");
+    this.root.classList.add("clear");
     this.set(`<div><div class="sub display" style="text-align:center">Pot locked · ${s.pot} PC</div>
       <div class="big display" data-testid="countdown">${secondsLeft(s.countdownEndsAt, s.serverTime)}</div></div>`);
   }
 
   result(r: MatchResult, me: string): void {
-    this.root.classList.remove("hidden");
+    this.solid();
     const mine = r.payouts.find((p) => p.userId === me)?.amount ?? 0;
     const won = r.winnerIds.includes(me);
     const headline =

@@ -1,3 +1,4 @@
+export * from "./combat.js";
 export * from "./constants.js";
 export * from "./escrow.js";
 export * from "./geometry.js";
