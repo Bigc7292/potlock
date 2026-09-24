@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #07080b;
+  --color-steel: #1a1e26;
+  --color-plate: #262c37;
+  --color-rivet: #8a93a6;
+  --color-gilt: #f2b92c;
+  --color-signal: #3de0ff;
+  --color-alarm: #ff4d5e;
+  --font-display: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: #e8ecf3;
+}
