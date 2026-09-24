@@ -6,6 +6,11 @@ import { currentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
+// Read per request so a deployed lobby can point at a new game address without a rebuild.
+function gameUrl(): string {
+  return (process.env.GAME_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? "http://localhost:5173").replace(/\/+$/, "");
+}
+
 const KIND_LABEL: Record<LedgerLine["kind"], string> = {
   STARTER_GRANT: "Starter grant",
   POT_HOLD: "Ante locked in pot",
@@ -56,7 +61,7 @@ export default async function LobbyPage() {
         }
       />
       <div className="mt-10 space-y-8">
-        <TableBrowser balance={balance} />
+        <TableBrowser balance={balance} gameUrl={gameUrl()} />
         <section className="rounded-lg border border-plate bg-steel p-6">
           <h2 className="font-display text-xl uppercase tracking-wider">Ledger</h2>
           <p className="mt-1 text-xs text-rivet">Every Pot Credit movement on your wallet, newest first.</p>

@@ -13,7 +13,12 @@
     "db:seed": "pnpm --filter @potlock/db seed",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "typecheck": "pnpm -r typecheck",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:web": "pnpm --filter @potlock/web build",
+    "start:web": "pnpm --filter @potlock/web start",
+    "build:match": "pnpm --filter @potlock/game build",
+    "start:match": "pnpm --filter @potlock/match start",
+    "release": "pnpm --filter @potlock/db migrate:deploy && pnpm db:seed"
   },
   "devDependencies": {
     "@playwright/test": "~1.56.1",

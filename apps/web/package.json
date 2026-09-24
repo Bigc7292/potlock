@@ -6,13 +6,14 @@
   "scripts": {
     "dev": "dotenv -e ../../.env -- next dev -p 3000",
     "build": "dotenv -e ../../.env -- next build",
-    "start": "dotenv -e ../../.env -- next start -p 3000",
+    "start": "dotenv -e ../../.env -- sh -c 'next start -p ${PORT:-3000}'",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "echo 'web: no unit tests (covered by e2e)'"
   },
   "dependencies": {
     "@potlock/db": "workspace:*",
     "@potlock/shared": "workspace:*",
+    "dotenv-cli": "^8.0.0",
     "jose": "^6.1.0",
     "next": "~15.5.26",
     "next-auth": "^4.24.15",
@@ -24,7 +25,6 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "dotenv-cli": "^8.0.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.3"
   }
