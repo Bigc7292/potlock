@@ -1,0 +1,151 @@
+// Potlock v1 ledger. Pot Credits are integers. Balances change only inside the same
+// database transaction that writes the matching LedgerEntry rows (double-entry: the
+// entries of one LedgerTransaction always sum to zero).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  handle       String        @unique
+  passwordHash String?
+  isGuest      Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  account      Account?
+  matchPlayers MatchPlayer[]
+
+  @@map("users")
+}
+
+enum AccountKind {
+  USER_WALLET
+  POT_ESCROW
+  SYSTEM_MINT
+}
+
+model Account {
+  id        String        @id @default(cuid())
+  kind      AccountKind
+  userId    String?       @unique
+  user      User?         @relation(fields: [userId], references: [id])
+  /// Fixed key for singleton system accounts (e.g. "mint").
+  systemKey String?       @unique
+  /// Cached balance. Only ever changed together with a LedgerEntry in one transaction.
+  balance   Int           @default(0)
+  createdAt DateTime      @default(now())
+  entries   LedgerEntry[]
+  pot       Pot?
+
+  @@map("accounts")
+}
+
+enum LedgerKind {
+  STARTER_GRANT
+  POT_HOLD
+  POT_PAYOUT
+  POT_SPLIT
+  POT_REFUND
+}
+
+model LedgerTransaction {
+  id        String        @id @default(cuid())
+  kind      LedgerKind
+  matchId   String?
+  match     Match?        @relation(fields: [matchId], references: [id])
+  memo      String
+  createdAt DateTime      @default(now())
+  entries   LedgerEntry[]
+
+  @@index([matchId])
+  @@map("ledger_transactions")
+}
+
+model LedgerEntry {
+  id            String            @id @default(cuid())
+  transactionId String
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id])
+  accountId     String
+  account       Account           @relation(fields: [accountId], references: [id])
+  /// Signed amount: negative debits the account, positive credits it.
+  amount        Int
+  balanceAfter  Int
+  createdAt     DateTime          @default(now())
+
+  @@index([accountId, createdAt])
+  @@map("ledger_entries")
+}
+
+enum PotStatus {
+  HELD
+  RELEASED
+  SPLIT
+  REFUNDED
+}
+
+model Pot {
+  id        String    @id @default(cuid())
+  matchId   String    @unique
+  match     Match     @relation(fields: [matchId], references: [id])
+  accountId String    @unique
+  account   Account   @relation(fields: [accountId], references: [id])
+  ante      Int
+  total     Int
+  /// Stored for the future; v1 never charges rake.
+  rakeBps   Int       @default(0)
+  status    PotStatus @default(HELD)
+  createdAt DateTime  @default(now())
+  settledAt DateTime?
+
+  @@map("pots")
+}
+
+enum MatchStatus {
+  LOCKED
+  LIVE
+  ENDED
+  CANCELLED
+}
+
+model Match {
+  id           String              @id
+  roomId       String
+  mode         String
+  ante         Int
+  status       MatchStatus         @default(LOCKED)
+  winnerUserId String?
+  createdAt    DateTime            @default(now())
+  startedAt    DateTime?
+  endedAt      DateTime?
+  pot          Pot?
+  players      MatchPlayer[]
+  transactions LedgerTransaction[]
+
+  @@map("matches")
+}
+
+enum MatchOutcome {
+  WIN
+  LOSS
+  SPLIT
+  FORFEIT
+  REFUNDED
+}
+
+model MatchPlayer {
+  matchId String
+  match   Match         @relation(fields: [matchId], references: [id])
+  userId  String
+  user    User          @relation(fields: [userId], references: [id])
+  seat    Int
+  score   Int           @default(0)
+  outcome MatchOutcome?
+
+  @@id([matchId, userId])
+  @@map("match_players")
+}
