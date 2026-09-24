@@ -1,24 +1,73 @@
-import * as THREE from "three";
-import { DRYDOCK_09 } from "@potlock/shared";
+import "./style.css";
+import { isAntePreset, type Snapshot } from "@potlock/shared";
+import { connect, type Connection, type TableTarget } from "./net.js";
+import { TableOverlay } from "./ui.js";
 
-// Phase 0: render the Drydock 09 blockout from shared geometry.
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.style.margin = "0";
-document.body.appendChild(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x07080b);
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
-camera.position.set(0, 30, 34);
-camera.lookAt(0, 0, 0);
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x20242c, 1.2));
-
-for (const b of DRYDOCK_09.boxes) {
-  const size = new THREE.Vector3(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z);
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshLambertMaterial({ color: 0x5a6273 }));
-  mesh.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
-  scene.add(mesh);
+function readTarget(): { target: TableTarget; token: string } | null {
+  const params = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.slice(1));
+  const token = hash.get("t");
+  // Drop the token from the address bar so it is not bookmarked or shared.
+  if (token) history.replaceState(null, "", window.location.pathname + window.location.search);
+  if (!token) return null;
+  const create = Number(params.get("create"));
+  if (isAntePreset(create)) return { target: { kind: "create", ante: create }, token };
+  const join = params.get("join");
+  if (join) return { target: { kind: "join", roomId: join }, token };
+  return null;
 }
 
-renderer.setAnimationLoop(() => renderer.render(scene, camera));
+function userIdFromToken(token: string): string {
+  try {
+    const payload = JSON.parse(atob((token.split(".")[1] ?? "").replace(/-/g, "+").replace(/_/g, "/"))) as { sub?: string };
+    return payload.sub ?? "";
+  } catch {
+    return "";
+  }
+}
+
+async function main(): Promise<void> {
+  let conn: Connection | null = null;
+  const overlay = new TableOverlay({
+    setReady: (ready) => conn?.send("ready", { ready }),
+    lock: () => conn?.send("lock", {}),
+  });
+  const entry = readTarget();
+  if (!entry) {
+    overlay.message("No table selected", "Open or join a Gilt Round table from the lobby.");
+    return;
+  }
+  const me = userIdFromToken(entry.token);
+  overlay.message("Connecting", "Finding your seat...");
+  try {
+    conn = await connect(entry.target, entry.token);
+  } catch (err) {
+    overlay.message("Could not sit down", err instanceof Error ? err.message : "The table is unavailable.");
+    return;
+  }
+
+  let ended = false;
+  let latest: Snapshot | null = null;
+  conn.onSnapshot((s) => {
+    latest = s;
+    if (ended) return;
+    if (s.phase === "waiting" || s.phase === "locked") overlay.table(s, me);
+    else if (s.phase === "countdown") overlay.countdown(s);
+    else if (s.phase === "live") overlay.hide();
+  });
+  conn.onEvent((e) => {
+    if (e.type === "notice" || e.type === "lockFailed") {
+      overlay.setNotice(e.type === "notice" ? e.text : e.message);
+      if (latest && latest.phase === "waiting") overlay.table(latest, me);
+    }
+    if (e.type === "result") {
+      ended = true;
+      overlay.result(e.result, me);
+    }
+  });
+  conn.onClose((code) => {
+    if (!ended) overlay.message("Disconnected", code === 4000 ? "You were removed from the table." : "The connection to the table closed.");
+  });
+}
+
+void main();

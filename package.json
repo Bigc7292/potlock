@@ -2,7 +2,9 @@
   "name": "potlock",
   "private": true,
   "packageManager": "pnpm@10.33.0",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "pnpm --parallel --filter @potlock/web --filter @potlock/game --filter @potlock/match dev",
     "db:up": "docker compose up -d",
@@ -10,12 +12,22 @@
     "db:migrate": "pnpm --filter @potlock/db migrate",
     "db:seed": "pnpm --filter @potlock/db seed",
     "test": "pnpm -r --workspace-concurrency=1 test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "~1.56.1",
+    "@types/node": "^22.20.4",
     "typescript": "^5.9.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@prisma/client", "@prisma/engines", "prisma", "esbuild", "sharp", "bcryptjs"]
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "esbuild",
+      "sharp",
+      "bcryptjs"
+    ]
   }
 }

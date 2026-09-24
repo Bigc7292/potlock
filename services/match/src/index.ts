@@ -1,29 +1,25 @@
-import http from "node:http";
-import { Server } from "@colyseus/core";
-import { WebSocketTransport } from "@colyseus/ws-transport";
-import { RedisPresence } from "@colyseus/redis-presence";
 import { RedisDriver } from "@colyseus/redis-driver";
-import cors from "cors";
-import express from "express";
-import { HelloRoom } from "./HelloRoom.js";
+import { RedisPresence } from "@colyseus/redis-presence";
+import { PrismaEscrow, PrismaMatchLog } from "@potlock/db";
+import { createMatchServer } from "./app.js";
+import { configureMatchDeps } from "./deps.js";
 
 const port = Number(process.env.MATCH_PORT ?? 2567);
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+const tokenSecret = process.env.MATCH_TOKEN_SECRET;
+if (!tokenSecret) throw new Error("MATCH_TOKEN_SECRET is not set (see .env.example)");
 
-const app = express();
-app.use(cors());
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+configureMatchDeps({
+  escrow: new PrismaEscrow(),
+  matchLog: new PrismaMatchLog(),
+  tokenSecret,
+  now: () => Date.now(),
 });
 
-const httpServer = http.createServer(app);
-const gameServer = new Server({
-  transport: new WebSocketTransport({ server: httpServer }),
+const { gameServer } = createMatchServer({
   presence: new RedisPresence(redisUrl),
   driver: new RedisDriver(redisUrl),
 });
 
-gameServer.define("hello", HelloRoom);
-
 await gameServer.listen(port);
-console.log(`[match] listening on :${port}`);
+console.log(`[match] Gilt Round rooms listening on :${port}`);

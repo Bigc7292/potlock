@@ -1,0 +1,38 @@
+@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Inter:wght@400;600&display=swap");
+
+:root {
+  --ink: #07080b;
+  --steel: #1a1e26;
+  --plate: #262c37;
+  --rivet: #8a93a6;
+  --gilt: #f2b92c;
+  --signal: #3de0ff;
+  --alarm: #ff4d5e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ink); color: #e8ecf3; font-family: Inter, system-ui, sans-serif; overflow: hidden; }
+canvas { display: block; }
+.display { font-family: "Chakra Petch", system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; }
+.overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(7, 8, 11, 0.82); z-index: 10; }
+.overlay.hidden { display: none; }
+.panel { width: min(560px, calc(100vw - 32px)); background: var(--steel); border: 1px solid var(--plate); border-radius: 10px; padding: 24px; }
+.panel h1 { margin: 0; color: var(--gilt); font-size: 28px; }
+.panel .sub { color: var(--rivet); font-size: 13px; margin-top: 4px; }
+.pot { font-size: 44px; color: var(--gilt); margin: 16px 0 4px; }
+.seats { list-style: none; padding: 0; margin: 16px 0; border-top: 1px solid var(--plate); }
+.seats li { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--plate); }
+.tag { font-size: 11px; color: var(--rivet); margin-left: 8px; }
+.ready { color: var(--signal); }
+.notready { color: var(--rivet); }
+.row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+button { cursor: pointer; border: 0; border-radius: 6px; padding: 10px 18px; font-family: "Chakra Petch", system-ui, sans-serif; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 15px; }
+button.primary { background: var(--gilt); color: var(--ink); }
+button.secondary { background: transparent; color: var(--signal); border: 1px solid var(--signal); }
+button:disabled { background: var(--plate); color: var(--rivet); border-color: var(--plate); cursor: default; }
+a.link { color: var(--rivet); font-size: 13px; }
+.notice { margin-top: 12px; min-height: 18px; font-size: 13px; color: var(--alarm); }
+.hint { font-size: 12px; color: var(--rivet); margin-top: 12px; line-height: 1.5; }
+.big { font-size: 96px; color: var(--gilt); text-align: center; }
+.payout { font-size: 20px; margin: 8px 0; }
+.win { color: var(--signal); }
+.loss { color: var(--alarm); }
