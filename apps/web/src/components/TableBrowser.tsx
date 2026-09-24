@@ -3,9 +3,7 @@
 import { useEffect, useState } from "react";
 import { ANTE_PRESETS, GILT_ROUND, type TableListing } from "@potlock/shared";
 
-const GAME_URL = process.env.NEXT_PUBLIC_GAME_URL ?? "http://localhost:5173";
-
-async function goToTable(query: string): Promise<void> {
+async function goToTable(gameUrl: string, query: string): Promise<void> {
   const res = await fetch("/api/match-token", { method: "POST" });
   if (!res.ok) {
     window.location.reload();
@@ -13,7 +11,7 @@ async function goToTable(query: string): Promise<void> {
   }
   const { token } = (await res.json()) as { token: string };
   // The token rides in the URL fragment, which browsers never send to a server.
-  window.location.href = `${GAME_URL}/?${query}#t=${encodeURIComponent(token)}`;
+  window.location.href = `${gameUrl}/?${query}#t=${encodeURIComponent(token)}`;
 }
 
 const PHASE_LABEL: Record<TableListing["phase"], string> = {
@@ -24,7 +22,7 @@ const PHASE_LABEL: Record<TableListing["phase"], string> = {
   ended: "Paying out",
 };
 
-export function TableBrowser({ balance }: { balance: number }) {
+export function TableBrowser({ balance, gameUrl }: { balance: number; gameUrl: string }) {
   const [tables, setTables] = useState<TableListing[]>([]);
   const [offline, setOffline] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,7 +50,7 @@ export function TableBrowser({ balance }: { balance: number }) {
 
   function go(query: string) {
     setBusy(true);
-    void goToTable(query).finally(() => setBusy(false));
+    void goToTable(gameUrl, query).finally(() => setBusy(false));
   }
 
   return (

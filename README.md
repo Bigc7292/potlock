@@ -38,6 +38,11 @@ or two different browsers.
 6. First to 3 eliminations wins. The results screen shows **+50 PC** for the winner.
    **Back to lobby** shows the new balance, and the ledger lists the ante and the payout (refresh any time).
 
+## Put it online
+
+See [DEPLOY.md](DEPLOY.md): two Node services (lobby and match server) plus Postgres, on Railway, Render,
+or Vercel for the lobby with the match server elsewhere.
+
 ## Tests
 
 ```bash

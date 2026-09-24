@@ -10,8 +10,14 @@ function isTableMetadata(v: unknown): v is TableMetadata {
   return typeof v === "object" && v !== null && "ante" in v && "phase" in v;
 }
 
-/** Build the HTTP + Colyseus server. Presence/driver are Redis in production, in-memory in tests. */
-export function createMatchServer(opts: { presence?: Presence; driver?: MatchMakerDriver }): {
+/** Built game client this server hands out, plus the lobby address it links back to. */
+export interface StaticGame {
+  dir: string;
+  lobbyUrl: string;
+}
+
+/** Build the HTTP + Colyseus server. Presence/driver are Redis on multi-node hosts, in-memory otherwise. */
+export function createMatchServer(opts: { presence?: Presence; driver?: MatchMakerDriver; staticGame?: StaticGame }): {
   app: express.Express;
   gameServer: Server;
 } {
@@ -32,6 +38,15 @@ export function createMatchServer(opts: { presence?: Presence; driver?: MatchMak
       .sort((a, b) => Number(a.phase !== "waiting") - Number(b.phase !== "waiting") || a.ante - b.ante);
     res.json({ tables });
   });
+  if (opts.staticGame) {
+    const { dir, lobbyUrl } = opts.staticGame;
+    // Replaces the empty dev file so one client build works on any host.
+    app.get("/runtime-config.js", (_req, res) => {
+      res.type("application/javascript").set("Cache-Control", "no-store");
+      res.send(`window.POTLOCK_CONFIG = ${JSON.stringify({ lobbyUrl })};\n`);
+    });
+    app.use(express.static(dir));
+  }
 
   const httpServer = http.createServer(app);
   const gameServer = new Server({
