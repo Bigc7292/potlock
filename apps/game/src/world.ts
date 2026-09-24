@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { buildLevel, type Level } from "./render/level.js";
+import { buildMaterials, type MaterialLibrary } from "./render/materials.js";
 import { buildLightRig, setShadowMapSize, type LightRig } from "./render/lights.js";
 import { PALETTE } from "./render/palette.js";
 import { PostStack } from "./render/post.js";
@@ -165,6 +167,8 @@ export class World {
   private readonly lights: LightRig;
   private readonly sky: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   private lastRender = performance.now();
+  private materials!: MaterialLibrary;
+  private level!: Level;
   private readonly avatars = new Map<string, Avatar>();
   private readonly tracers: Tracer[] = [];
   private readonly pedestalLance: THREE.Group;
@@ -264,47 +268,9 @@ export class World {
   }
 
   private buildLevel(): void {
-    const floorTex = gridTexture();
-    let containerIndex = 0;
-    for (const b of DRYDOCK_09.boxes) {
-      const sx = b.max.x - b.min.x;
-      const sy = b.max.y - b.min.y;
-      const sz = b.max.z - b.min.z;
-      const style = KIND_STYLE[b.kind];
-      const color = b.kind === "container" ? (CONTAINER_TINTS[containerIndex++ % CONTAINER_TINTS.length] ?? style.color) : style.color;
-      const mat = new THREE.MeshStandardMaterial({
-        color,
-        metalness: style.metal,
-        roughness: style.rough,
-        emissive: style.emissive ?? 0x000000,
-      });
-      if (b.kind === "floor") {
-        const tex = floorTex.clone();
-        tex.repeat.set(sx / 4, sz / 4);
-        tex.needsUpdate = true;
-        mat.map = tex;
-        mat.color.set(0xffffff);
-      }
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
-      mesh.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
-      this.scene.add(mesh);
-      if (b.kind === "catwalk" || b.kind === "tower" || b.kind === "container") {
-        const edges = new THREE.LineSegments(
-          new THREE.EdgesGeometry(mesh.geometry),
-          new THREE.LineBasicMaterial({ color: b.kind === "catwalk" ? 0xf2b92c : 0x0b0d12 }),
-        );
-        edges.position.copy(mesh.position);
-        this.scene.add(edges);
-      }
-    }
-    // Lane markings: the open kill lane down the middle.
-    const laneMat = new THREE.MeshBasicMaterial({ color: 0xf2b92c });
-    for (const z of [-4, 4]) {
-      const strip = new THREE.Mesh(new THREE.PlaneGeometry(46, 0.12), laneMat);
-      strip.rotation.x = -Math.PI / 2;
-      strip.position.set(0, 0.01, z);
-      this.scene.add(strip);
-    }
+    this.materials = buildMaterials(this.quality.level, 24, 16);
+    this.level = buildLevel(this.materials, this.quality.level === "low" ? 2 : 8);
+    this.scene.add(this.level.group);
   }
 
   private buildViewGun(): THREE.Group {
@@ -406,6 +372,7 @@ export class World {
     this.viewCamera.quaternion.copy(this.camera.quaternion);
     this.sky.position.copy(this.camera.position);
     this.sky.material.uniforms.uTime!.value = now / 1000;
+    this.level.update(now / 1000);
     this.viewGun.visible = showViewModel && weapon === "kestrel";
     this.viewLance.visible = showViewModel && weapon === "lance";
     this.kick *= 0.82;
