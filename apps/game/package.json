@@ -12,6 +12,7 @@
   "dependencies": {
     "@potlock/shared": "workspace:*",
     "colyseus.js": "~0.16.22",
+    "postprocessing": "^6.39.5",
     "three": "^0.180.0"
   },
   "devDependencies": {

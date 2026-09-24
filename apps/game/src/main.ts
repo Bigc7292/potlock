@@ -28,6 +28,12 @@ function userIdFromToken(token: string): string {
 }
 
 async function main(): Promise<void> {
+  // Dev-only art preview: the scene with staged dummies, no server or pot involved.
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview")) {
+    const { startPreview } = await import("./preview.js");
+    startPreview();
+    return;
+  }
   let conn: Connection | null = null;
   const overlay = new TableOverlay({
     setReady: (ready) => conn?.send("ready", { ready }),

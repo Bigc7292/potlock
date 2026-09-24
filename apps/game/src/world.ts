@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import { buildLightRig, setShadowMapSize, type LightRig } from "./render/lights.js";
+import { PALETTE } from "./render/palette.js";
+import { PostStack } from "./render/post.js";
+import { FrameGovernor, initialQuality, saveQuality, settingsFor, type QualityLevel, type QualitySettings } from "./render/quality.js";
+import { bakeEnvironment, createSkyDome } from "./render/sky.js";
 import {
   AURIC_LANCE,
   DRYDOCK_09,
@@ -151,44 +156,50 @@ interface Tracer {
 export class World {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.PerspectiveCamera(78, 1, 0.05, 250);
+  readonly camera = new THREE.PerspectiveCamera(78, 1, 0.05, 450);
+  /** Renders only layer 1 (the viewmodel) with its own FOV after a depth clear. */
+  readonly viewCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
+  quality: QualitySettings;
+  private post: PostStack;
+  private readonly governor: FrameGovernor;
+  private readonly lights: LightRig;
+  private readonly sky: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  private lastRender = performance.now();
   private readonly avatars = new Map<string, Avatar>();
   private readonly tracers: Tracer[] = [];
   private readonly pedestalLance: THREE.Group;
-  private readonly pedestalGlow: THREE.PointLight;
   private readonly telegraphs = new Map<string, THREE.Line>();
   private readonly viewGun: THREE.Group;
   private readonly viewLance: THREE.Group;
-  private readonly muzzle: THREE.PointLight;
   private muzzleUntil = 0;
   private kick = 0;
 
   constructor(container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.quality = settingsFor(initialQuality());
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false, depth: true });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Tone mapping is done by the grade pass on the HDR buffer; materials render linear.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.info.autoReset = false;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x06070c);
-    this.scene.fog = new THREE.Fog(0x06070c, 25, 70);
-    this.scene.add(new THREE.HemisphereLight(0x8fa3d6, 0x1c2029, 1.7));
-    this.scene.add(new THREE.AmbientLight(0x404a60, 0.6));
-    const moon = new THREE.DirectionalLight(0xaec4ff, 0.8);
-    moon.position.set(-20, 40, 10);
-    this.scene.add(moon);
-    // Sodium lamps over the quay and the two power positions.
-    for (const [x, y, z, c, i] of [
-      [0, 7, 0, 0xffb347, 30],
-      [18, 9, 11.5, 0xffb347, 25],
-      [-18, 9, -11.5, 0xffb347, 25],
-      [-12, 6, 10, 0x3de0ff, 14],
-      [12, 6, -10, 0x3de0ff, 14],
-    ] as const) {
-      const light = new THREE.PointLight(c, i * 1.4, 34, 1.4);
-      light.position.set(x, y, z);
-      this.scene.add(light);
-    }
+    this.scene.fog = new THREE.FogExp2(PALETTE.fog, 0.019);
+    this.scene.background = new THREE.Color(PALETTE.void);
+    this.sky = createSkyDome();
+    this.scene.add(this.sky);
+    this.scene.environment = bakeEnvironment(this.renderer);
+    this.scene.environmentIntensity = 0.9;
+    this.lights = buildLightRig(this.scene, this.quality.shadowMapSize);
+    this.camera.layers.set(0);
+    this.viewCamera.layers.set(1);
+    this.scene.add(this.viewCamera);
+    this.post = new PostStack(this.renderer, this.scene, this.camera, this.viewCamera, this.quality);
+    this.governor = new FrameGovernor(() => {
+      if (!new URLSearchParams(window.location.search).has("fixedq")) this.stepDown();
+    });
     this.buildLevel();
 
     const pedestal = new THREE.Mesh(
@@ -200,21 +211,17 @@ export class World {
     this.scene.add(pedestal);
     this.pedestalLance = buildLanceModel();
     this.scene.add(this.pedestalLance);
-    this.pedestalGlow = new THREE.PointLight(0xf2b92c, 0, 8, 2);
-    this.scene.add(this.pedestalGlow);
-
     this.scene.add(this.camera);
     this.viewGun = this.buildViewGun();
-    this.camera.add(this.viewGun);
+    this.viewCamera.add(this.viewGun);
     this.viewLance = buildLanceModel();
     this.viewLance.scale.setScalar(0.6);
     this.viewLance.position.set(0.22, -0.2, -0.55);
     this.viewLance.rotation.y = Math.PI / 2 + 0.08;
     this.viewLance.visible = false;
-    this.camera.add(this.viewLance);
-    this.muzzle = new THREE.PointLight(0xffd36a, 0, 6, 2);
-    this.muzzle.position.set(0.25, -0.15, -0.8);
-    this.camera.add(this.muzzle);
+    this.viewCamera.add(this.viewLance);
+    for (const g of [this.viewGun, this.viewLance]) g.traverse((o) => o.layers.set(1));
+    this.lights.moon.shadow.needsUpdate = true;
 
     this.resize();
     window.addEventListener("resize", () => this.resize());
@@ -225,9 +232,35 @@ export class World {
   }
 
   private resize(): void {
+    const q = this.quality;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.maxPixelRatio) * q.renderScale);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.camera.aspect = window.innerWidth / window.innerHeight;
-    this.camera.updateProjectionMatrix();
+    this.post.setSize(window.innerWidth, window.innerHeight);
+    for (const c of [this.camera, this.viewCamera]) {
+      c.aspect = window.innerWidth / window.innerHeight;
+      c.updateProjectionMatrix();
+    }
+  }
+
+  /** Runtime step-down (high → mid → low); geometry and lights stay, so no material recompiles. */
+  private stepDown(): void {
+    const next: QualityLevel | null = this.quality.level === "high" ? "mid" : this.quality.level === "mid" ? "low" : null;
+    if (next) this.setQuality(next);
+  }
+
+  setQuality(level: QualityLevel, persist = false): void {
+    this.quality = settingsFor(level);
+    if (persist) saveQuality(level);
+    this.post.dispose();
+    this.post = new PostStack(this.renderer, this.scene, this.camera, this.viewCamera, this.quality);
+    setShadowMapSize(this.lights.moon, this.quality.shadowMapSize);
+    this.resize();
+  }
+
+  /** Draw calls and triangles of the last frame (dev overlay and perf checks). */
+  stats(): { fps: number; calls: number; triangles: number; quality: QualityLevel; programs: number } {
+    const info = this.renderer.info;
+    return { fps: this.governor.fps, calls: info.render.calls, triangles: info.render.triangles, quality: this.quality.level, programs: info.programs?.length ?? 0 };
   }
 
   private buildLevel(): void {
@@ -320,11 +353,11 @@ export class World {
   setLance(lance: LanceView, time: number): void {
     const at: Vec3 | null = lance.state === "pedestal" || lance.state === "dropped" ? lance.position : null;
     this.pedestalLance.visible = at !== null;
-    this.pedestalGlow.intensity = at ? 6 : 0;
+    this.lights.pedestal.intensity = at ? 30 : 0;
     if (at) {
       this.pedestalLance.position.set(at.x, at.y + 1.1 + Math.sin(time * 2.2) * 0.08, at.z);
       this.pedestalLance.rotation.y = time * 0.9;
-      this.pedestalGlow.position.set(at.x, at.y + 1.4, at.z);
+      this.lights.pedestal.position.set(at.x, at.y + 1.4, at.z);
     }
   }
 
@@ -369,12 +402,18 @@ export class World {
   render(eye: Vec3, yaw: number, pitch: number, weapon: WeaponId, showViewModel: boolean, now: number): void {
     this.camera.position.set(eye.x, eye.y, eye.z);
     this.camera.rotation.set(pitch, yaw, 0, "YXZ");
+    this.viewCamera.position.copy(this.camera.position);
+    this.viewCamera.quaternion.copy(this.camera.quaternion);
+    this.sky.position.copy(this.camera.position);
+    this.sky.material.uniforms.uTime!.value = now / 1000;
     this.viewGun.visible = showViewModel && weapon === "kestrel";
     this.viewLance.visible = showViewModel && weapon === "lance";
     this.kick *= 0.82;
     this.viewGun.position.z = -0.36 + this.kick * 0.04;
     this.viewGun.rotation.x = this.kick * 0.25;
-    this.muzzle.intensity = now < this.muzzleUntil ? 8 : 0;
+    const muzzleOn = now < this.muzzleUntil;
+    this.lights.muzzle.intensity = muzzleOn ? 60 : 0;
+    if (muzzleOn) this.lights.muzzle.position.copy(this.camera.localToWorld(new THREE.Vector3(0.25, -0.15, -0.8)));
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
       if (!t) continue;
@@ -384,6 +423,11 @@ export class World {
         this.tracers.splice(i, 1);
       }
     }
-    this.renderer.render(this.scene, this.camera);
+    const dt = Math.min(0.1, (now - this.lastRender) / 1000);
+    this.lastRender = now;
+    this.post.update(now, 0);
+    this.renderer.info.reset();
+    this.post.render(dt);
+    this.governor.tick(now, showViewModel);
   }
 }
