@@ -1,4 +1,5 @@
-import { DRYDOCK_09, type LanceView, type PlayerView, type WeaponId } from "@potlock/shared";
+import { DRYDOCK_09, eyePosition, viewDirection, type LanceView, type PlayerView, type Snapshot, type WeaponId } from "@potlock/shared";
+import { Hud } from "./hud.js";
 import { World } from "./world.js";
 
 /**
@@ -76,7 +77,32 @@ export function startPreview(): void {
     dummy("e", -14, -10, 2.8),
   ];
   const seats = ["a", "b", "c", "d", "e"];
-  world.syncAvatars(players, "me", (id) => seats.indexOf(id) + 1, (id) => `Crew ${id.toUpperCase()}`);
+  const names = ["Harlow", "Vesna", "Okafor", "Quill", "Mireille"];
+  const nameOf = (id: string): string => names[seats.indexOf(id)] ?? "You";
+  world.syncAvatars(players, "me", (id) => seats.indexOf(id) + 1, nameOf);
+  const hud = new Hud();
+  const withHud = params.has("hud");
+  const withFx = params.has("fx");
+  const me: PlayerView = dummy("me", 0, 0, 0, "kestrel", { hp: 64, ammo: 5 });
+  const snapshot = (now: number): Snapshot => ({
+    tick: 0,
+    serverTime: now,
+    phase: "live",
+    ante: 25,
+    pot: 150,
+    seats: [{ userId: "me", name: "You", seat: 0, ready: true, isHost: true, score: 2, connected: true, forfeited: false }, ...seats.map((id, i) => ({ userId: id, name: nameOf(id), seat: i + 1, ready: true, isHost: false, score: i % 3, connected: true, forfeited: false }))],
+    players: [me, ...players],
+    lance: { state: "held", holderId: "d" },
+    autoLockAt: null,
+    countdownEndsAt: null,
+    liveEndsAt: now + 131000,
+  });
+  if (withHud) {
+    hud.killFeed({ killer: "Vesna", victim: "Okafor", killerSeat: 2, victimSeat: 3, lance: false, mine: false });
+    hud.killFeed({ killer: "Quill", victim: "Harlow", killerSeat: 4, victimSeat: 1, lance: true, mine: false });
+    hud.killFeed({ killer: "You", victim: "Mireille", killerSeat: 0, victimSeat: 5, lance: false, mine: true });
+  }
+  let fxAt = 0;
 
   const api = {
     poses: POSES.map((p) => p.name),
@@ -103,7 +129,23 @@ export function startPreview(): void {
     for (const p of players) {
       const walk = p.userId === "a" || p.userId === "c";
       const pos = walk ? { x: p.x + Math.sin(t * 0.6) * 1.5, y: p.y, z: p.z, yaw: p.yaw } : { x: p.x, y: p.y, z: p.z, yaw: p.yaw };
-      world.placeAvatar(p.userId, pos, p.alive, p.userId === "e" && Math.floor(t) % 3 === 0, p.weapon);
+      const charging = p.userId === "d" && withFx && t % 2 < 0.4;
+      world.placeAvatar(p.userId, pos, p.alive, p.userId === "e" && Math.floor(t) % 3 === 0, p.weapon, charging);
+      world.setTelegraph(p.userId, charging ? eyePosition(p) : null, charging ? viewDirection(p.yaw + 0.3, 0) : null);
+    }
+    if (withFx && now > fxAt) {
+      fxAt = now + 220;
+      const c0 = POSES[pose] ?? POSES[0]!;
+      const a = players[Math.floor(Math.random() * 3)]!;
+      const target = { x: a.x + (Math.random() - 0.5) * 6, y: 0.6 + Math.random() * 2, z: a.z + 8 * Math.sign(-a.z || 1) };
+      world.shot({ from: eyePosition(a), to: target, weapon: "kestrel", hitId: null, damage: 0 }, false, now);
+      if (Math.random() < 0.3) world.shot({ from: c0.eye, to: eyePosition(players[1]!), weapon: "kestrel", hitId: "b", damage: 18 }, true, now);
+      if (Math.random() < 0.05) world.shot({ from: eyePosition(players[3]!), to: { x: -20, y: 1.2, z: 3 }, weapon: "lance", hitId: null, damage: 0 }, false, now);
+      if (Math.random() < 0.3) world.localFire(now, "kestrel");
+    }
+    if (withHud) {
+      hud.show(true);
+      hud.update(snapshot(now), "me", me, true, null, nameOf);
     }
     const ped = DRYDOCK_09.lancePedestal;
     const lance: LanceView =

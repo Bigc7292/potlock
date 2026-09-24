@@ -39,8 +39,8 @@ void main() {
   // Sodium city glow low in the north (+z), cyan harbour haze in the south (-z).
   float north = max(0.0, d.z) * (1.0 - smoothstep(0.0, 0.22, h));
   float south = max(0.0, -d.z) * (1.0 - smoothstep(0.0, 0.16, h));
-  col += uSodium * north * 0.16;
-  col += uCyan * south * 0.05;
+  col += uSodium * north * 0.22;
+  col += uCyan * south * 0.09;
   // Slow, thin cloud deck catching the glow.
   vec2 cp = d.xz / max(0.08, d.y + 0.15) * 1.3 + vec2(uTime * 0.004, 0.0);
   float cloud = smoothstep(0.55, 0.85, vnoise(cp) * 0.65 + vnoise(cp * 2.7) * 0.35);
@@ -65,7 +65,7 @@ export function createSkyDome(): THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMa
     fragmentShader: SKY_FRAG,
     uniforms: {
       uVoid: { value: lin(PALETTE.void) },
-      uHaze: { value: lin(PALETTE.fog).multiplyScalar(1.6) },
+      uHaze: { value: lin(PALETTE.fog).multiplyScalar(2.8) },
       uSodium: { value: lin(PALETTE.sodium) },
       uCyan: { value: lin(PALETTE.cyan) },
       uTime: { value: 0 },
@@ -104,6 +104,19 @@ export function bakeEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
   card(PALETTE.cyan, 3.0, 4, 3, [12, 10, -20]);
   card(PALETTE.cyan, 1.6, 3, 2, [30, 6, 0]);
   card(PALETTE.moon, 0.9, 30, 12, [-40, 25, 45]);
+  // Low horizon band so glancing reflections (puddles, water) pick up the harbour glow.
+  const band = new THREE.Mesh(
+    new THREE.CylinderGeometry(60, 60, 5, 48, 1, true),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      uniforms: { uS: { value: new THREE.Color(PALETTE.sodium) }, uC: { value: new THREE.Color(PALETTE.cyan) } },
+      vertexShader: "varying vec3 vP; void main() { vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader:
+        "uniform vec3 uS; uniform vec3 uC; varying vec3 vP; void main() { float k = smoothstep(2.5, -2.5, vP.y); float north = smoothstep(-40.0, 40.0, vP.z); gl_FragColor = vec4(mix(uC * 0.35, uS * 0.6, north) * k, 1.0); }",
+    }),
+  );
+  band.position.y = 1.5;
+  env.add(band);
   const pmrem = new THREE.PMREMGenerator(renderer);
   const rt = pmrem.fromScene(env, 0.035, 0.1, 400);
   pmrem.dispose();

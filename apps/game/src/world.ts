@@ -1,188 +1,85 @@
 import * as THREE from "three";
+import { DRYDOCK_09, rayAabb, type LanceView, type PlayerView, type Vec3, type WeaponId } from "@potlock/shared";
+import { Avatar } from "./render/avatar.js";
+import { StaticBatch } from "./render/batch.js";
 import { buildLevel, type Level } from "./render/level.js";
-import { buildMaterials, type MaterialLibrary } from "./render/materials.js";
 import { buildLightRig, setShadowMapSize, type LightRig } from "./render/lights.js";
+import { buildMaterials, type MaterialLibrary } from "./render/materials.js";
 import { PALETTE } from "./render/palette.js";
 import { PostStack } from "./render/post.js";
 import { FrameGovernor, initialQuality, saveQuality, settingsFor, type QualityLevel, type QualitySettings } from "./render/quality.js";
 import { bakeEnvironment, createSkyDome } from "./render/sky.js";
-import {
-  AURIC_LANCE,
-  DRYDOCK_09,
-  MOVEMENT,
-  type LanceView,
-  type MapBoxKind,
-  type PlayerView,
-  type Vec3,
-  type WeaponId,
-} from "@potlock/shared";
+import { radialTexture } from "./render/textures.js";
+import { surfaceNormal, Vfx } from "./render/vfx.js";
+import { ViewModel } from "./render/viewmodel.js";
+import { addLance, buildPedestal, type PedestalModel } from "./render/weapons.js";
 
-/** Late-night quay palette: dark steel, sodium amber, signal cyan. */
-const KIND_STYLE: Record<MapBoxKind, { color: number; metal: number; rough: number; emissive?: number }> = {
-  floor: { color: 0x22262e, metal: 0.1, rough: 0.9 },
-  wall: { color: 0x151922, metal: 0.4, rough: 0.7 },
-  container: { color: 0x7a2f28, metal: 0.55, rough: 0.5 },
-  crate: { color: 0x5f4a2e, metal: 0.1, rough: 0.8 },
-  catwalk: { color: 0x3a4351, metal: 0.8, rough: 0.35 },
-  stair: { color: 0x3d4552, metal: 0.7, rough: 0.4 },
-  rail: { color: 0xf2b92c, metal: 0.8, rough: 0.3, emissive: 0x3a2a05 },
-  tower: { color: 0x202733, metal: 0.6, rough: 0.5 },
-  pillar: { color: 0x4d5563, metal: 0.8, rough: 0.35 },
-  bollard: { color: 0xf2b92c, metal: 0.6, rough: 0.4, emissive: 0x2a1d02 },
-};
-
-const CONTAINER_TINTS = [0x7a2f28, 0x1f5a63, 0x8f6a1c, 0x3b4a6b];
-
-/** Seat colours, readable against the dark map. */
-export const SEAT_COLORS = [0x3de0ff, 0xff4d5e, 0x9dff5c, 0xc58bff, 0xff9f3d, 0xf5f5f5];
-
-function gridTexture(): THREE.CanvasTexture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 256;
-  const g = c.getContext("2d");
-  if (g) {
-    g.fillStyle = "#22262e";
-    g.fillRect(0, 0, 256, 256);
-    g.strokeStyle = "#2f3541";
-    g.lineWidth = 4;
-    g.strokeRect(0, 0, 256, 256);
-    g.strokeStyle = "#282d37";
-    g.lineWidth = 2;
-    g.beginPath();
-    g.moveTo(128, 0);
-    g.lineTo(128, 256);
-    g.moveTo(0, 128);
-    g.lineTo(256, 128);
-    g.stroke();
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+/** Local-player state the renderer needs for weapon feel (never used for game logic). */
+export interface LocalView {
+  reloading: boolean;
+  charging: boolean;
+  grounded: boolean;
+  vy: number;
 }
 
-function buildLanceModel(): THREE.Group {
-  // Original silhouette: a long two-tone spear with a floating ring and crystal tip.
-  const g = new THREE.Group();
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.035, 0.05, 1.4, 8),
-    new THREE.MeshStandardMaterial({ color: 0x1b2330, metalness: 0.9, roughness: 0.25 }),
-  );
-  shaft.rotation.z = Math.PI / 2;
-  g.add(shaft);
-  const tip = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.12, 0),
-    new THREE.MeshStandardMaterial({ color: 0xffd36a, emissive: 0xf2b92c, emissiveIntensity: 1.6 }),
-  );
-  tip.scale.set(2.2, 0.8, 0.8);
-  tip.position.x = 0.8;
-  g.add(tip);
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.16, 0.02, 8, 24),
-    new THREE.MeshStandardMaterial({ color: 0x3de0ff, emissive: 0x3de0ff, emissiveIntensity: 1.2 }),
-  );
-  ring.rotation.y = Math.PI / 2;
-  ring.position.x = 0.35;
-  g.add(ring);
-  return g;
+const WATER_Z = -17.35;
+const WATER_Y = -1.7;
+
+interface Stride {
+  x: number;
+  z: number;
+  acc: number;
 }
 
-class Avatar {
-  readonly root = new THREE.Group();
-  private readonly body: THREE.Mesh;
-  private readonly visor: THREE.Mesh;
-  private readonly lance: THREE.Group;
-  private readonly bodyMat: THREE.MeshStandardMaterial;
-
-  constructor(color: number, name: string) {
-    this.bodyMat = new THREE.MeshStandardMaterial({ color: 0x2b313c, metalness: 0.6, roughness: 0.4, emissive: color, emissiveIntensity: 0.15 });
-    this.body = new THREE.Mesh(new THREE.CapsuleGeometry(MOVEMENT.radius, MOVEMENT.height - MOVEMENT.radius * 2, 4, 10), this.bodyMat);
-    this.body.position.y = MOVEMENT.height / 2;
-    this.root.add(this.body);
-    const band = new THREE.Mesh(
-      new THREE.TorusGeometry(MOVEMENT.radius + 0.01, 0.04, 6, 20),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1 }),
-    );
-    band.rotation.x = Math.PI / 2;
-    band.position.y = 1.05;
-    this.root.add(band);
-    this.visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 0.14, 0.2),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.4 }),
-    );
-    this.visor.position.set(0, MOVEMENT.eyeHeight - 0.05, -0.3);
-    this.root.add(this.visor);
-    this.lance = buildLanceModel();
-    this.lance.position.set(0.45, 1.1, -0.3);
-    this.lance.rotation.y = Math.PI / 2;
-    this.lance.visible = false;
-    this.root.add(this.lance);
-    this.root.add(makeLabel(name, color));
-  }
-
-  update(p: { x: number; y: number; z: number; yaw: number }, alive: boolean, invulnerable: boolean, weapon: WeaponId): void {
-    this.root.position.set(p.x, p.y, p.z);
-    this.root.rotation.y = p.yaw;
-    this.root.visible = alive;
-    this.bodyMat.opacity = invulnerable ? 0.45 : 1;
-    this.bodyMat.transparent = invulnerable;
-    this.lance.visible = weapon === "lance";
-  }
-}
-
-function makeLabel(text: string, color: number): THREE.Sprite {
-  const c = document.createElement("canvas");
-  c.width = 256;
-  c.height = 64;
-  const g = c.getContext("2d");
-  if (g) {
-    g.font = "bold 30px 'Chakra Petch', sans-serif";
-    g.textAlign = "center";
-    g.fillStyle = "rgba(7,8,11,0.6)";
-    g.fillRect(0, 12, 256, 40);
-    g.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
-    g.fillText(text.slice(0, 16), 128, 42);
-  }
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: true }));
-  sprite.scale.set(1.6, 0.4, 1);
-  sprite.position.y = MOVEMENT.height + 0.45;
-  return sprite;
-}
-
-interface Tracer {
-  line: THREE.Line;
-  until: number;
-}
-
-/** Three.js scene for Drydock 09: level blockout, avatars, lance, tracers and view model. */
+/**
+ * Three.js presentation for Drydock 09: the dressed quay, lighting, post, avatars,
+ * weapons, pedestal and VFX. It reads snapshots and events; it never decides hits,
+ * scores or money.
+ */
 export class World {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(78, 1, 0.05, 450);
   /** Renders only layer 1 (the viewmodel) with its own FOV after a depth clear. */
-  readonly viewCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
+  readonly viewCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 10);
   quality: QualitySettings;
   private post: PostStack;
   private readonly governor: FrameGovernor;
   private readonly lights: LightRig;
   private readonly sky: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
-  private lastRender = performance.now();
-  private materials!: MaterialLibrary;
-  private level!: Level;
+  private readonly materials: MaterialLibrary;
+  private readonly level: Level;
+  private readonly vfx: Vfx;
+  private readonly viewModel: ViewModel;
+  private readonly pedestal: PedestalModel;
+  private readonly pedestalLance = new THREE.Group();
+  private readonly flare: THREE.Sprite;
   private readonly avatars = new Map<string, Avatar>();
-  private readonly tracers: Tracer[] = [];
-  private readonly pedestalLance: THREE.Group;
-  private readonly telegraphs = new Map<string, THREE.Line>();
-  private readonly viewGun: THREE.Group;
-  private readonly viewLance: THREE.Group;
-  private muzzleUntil = 0;
-  private kick = 0;
+  private readonly strides = new Map<string, Stride>();
+  private readonly localStride: Stride = { x: Number.NaN, z: 0, acc: 0 };
+  private readonly lastEye = new THREE.Vector3(Number.NaN, 0, 0);
+  private lastRender = performance.now();
+  private frameDt = 1 / 60;
+  private lastYaw = 0;
+  private lastPitch = 0;
+  private lastLance: LanceView["state"] | null = null;
+  private flashUntil = 0;
+  private flashWeapon: WeaponId = "kestrel";
+  private punchUntil = 0;
+  private punchRoll = 0;
+  private dip = 0;
+  private dipV = 0;
+  private wasGrounded = true;
+  private lastVy = 0;
+  private strideK = 0;
+  private flareCheckAt = 0;
+  private flareVisible = true;
 
   constructor(container: HTMLElement) {
     this.quality = settingsFor(initialQuality());
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", stencil: false, depth: true });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // Tone mapping is done by the grade pass on the HDR buffer; materials render linear.
+    // Materials render linear HDR into the composer; the grade pass applies ACES filmic.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.renderer.info.autoReset = false;
@@ -199,40 +96,78 @@ export class World {
     this.lights = buildLightRig(this.scene, this.quality.shadowMapSize);
     this.camera.layers.set(0);
     this.viewCamera.layers.set(1);
-    this.scene.add(this.viewCamera);
+    this.scene.add(this.camera, this.viewCamera);
+
+    const aniso = this.quality.level === "low" ? 2 : 8;
+    this.materials = buildMaterials(this.quality.level, 24, 16);
+    this.level = buildLevel(this.materials, aniso);
+    this.scene.add(this.level.group);
+
+    const ped = DRYDOCK_09.lancePedestal;
+    this.pedestal = buildPedestal(this.materials, new THREE.Vector3(ped.x, ped.y, ped.z));
+    this.scene.add(this.pedestal.group);
+    const lanceB = new StaticBatch<"brass" | "ceramic" | "core">();
+    addLance(lanceB, new THREE.Matrix4().makeTranslation(0, 0, 0.45), { brass: "brass", ceramic: "ceramic", core: "core" });
+    const lanceMats = { brass: this.materials.brass, ceramic: this.materials.ceramic, core: this.materials.lanceCore };
+    for (const m of lanceB.build(lanceMats, () => ({ cast: false, receive: false }))) this.pedestalLance.add(m);
+    this.pedestalLance.scale.setScalar(1.25);
+    this.scene.add(this.pedestalLance);
+
+    this.vfx = new Vfx({ steamVent: this.level.steamVent, mothLamp: this.level.mothLamp, waterZ: WATER_Z, waterY: WATER_Y }, this.materials.floorLayout.puddles);
+    this.scene.add(this.vfx.group);
+
+    this.viewModel = new ViewModel(this.materials);
+    this.viewCamera.add(this.viewModel.root);
+
+    // Tiny gated flare on the crane beacon: hidden when the map occludes it.
+    this.flare = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: radialTexture(64, "rgba(255,255,255,1)", "rgba(255,255,255,0)"),
+        color: new THREE.Color(PALETTE.beacon).multiplyScalar(6),
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        sizeAttenuation: false,
+        fog: false,
+      }),
+    );
+    this.flare.position.copy(this.level.beacon);
+    this.flare.scale.setScalar(0.035);
+    this.flare.renderOrder = 8;
+    this.scene.add(this.flare);
+
     this.post = new PostStack(this.renderer, this.scene, this.camera, this.viewCamera, this.quality);
     this.governor = new FrameGovernor(() => {
       if (!new URLSearchParams(window.location.search).has("fixedq")) this.stepDown();
     });
-    this.buildLevel();
-
-    const pedestal = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.6, 0.8, 0.35, 16),
-      new THREE.MeshStandardMaterial({ color: 0x2b313c, metalness: 0.9, roughness: 0.3, emissive: 0x3de0ff, emissiveIntensity: 0.25 }),
-    );
-    const ped = DRYDOCK_09.lancePedestal;
-    pedestal.position.set(ped.x, ped.y + 0.175, ped.z);
-    this.scene.add(pedestal);
-    this.pedestalLance = buildLanceModel();
-    this.scene.add(this.pedestalLance);
-    this.scene.add(this.camera);
-    this.viewGun = this.buildViewGun();
-    this.viewCamera.add(this.viewGun);
-    this.viewLance = buildLanceModel();
-    this.viewLance.scale.setScalar(0.6);
-    this.viewLance.position.set(0.22, -0.2, -0.55);
-    this.viewLance.rotation.y = Math.PI / 2 + 0.08;
-    this.viewLance.visible = false;
-    this.viewCamera.add(this.viewLance);
-    for (const g of [this.viewGun, this.viewLance]) g.traverse((o) => o.layers.set(1));
     this.lights.moon.shadow.needsUpdate = true;
-
     this.resize();
+    this.warmUp();
     window.addEventListener("resize", () => this.resize());
   }
 
   get canvas(): HTMLCanvasElement {
     return this.renderer.domElement;
+  }
+
+  /** Compile every program (avatars, Lance, beams, cones) up front so combat never hitches. */
+  private warmUp(): void {
+    const warm = new THREE.Group();
+    const probe = new Avatar(this.materials, 0, "warm");
+    probe.update({ x: 0, y: 0, z: 0, yaw: 0 }, true, true, "lance", false, 0, 0.016);
+    warm.add(probe.root);
+    this.scene.add(warm);
+    const hidden: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (!o.visible) {
+        hidden.push(o);
+        o.visible = true;
+      }
+    });
+    this.renderer.compile(this.scene, this.camera);
+    this.renderer.compile(this.scene, this.viewCamera);
+    for (const o of hidden) o.visible = false;
+    this.scene.remove(warm);
+    probe.dispose();
   }
 
   private resize(): void {
@@ -244,6 +179,7 @@ export class World {
       c.aspect = window.innerWidth / window.innerHeight;
       c.updateProjectionMatrix();
     }
+    this.vfx.setViewport(window.innerHeight * this.renderer.getPixelRatio(), this.camera);
   }
 
   /** Runtime step-down (high → mid → low); geometry and lights stay, so no material recompiles. */
@@ -261,36 +197,21 @@ export class World {
     this.resize();
   }
 
-  /** Draw calls and triangles of the last frame (dev overlay and perf checks). */
-  stats(): { fps: number; calls: number; triangles: number; quality: QualityLevel; programs: number } {
+  /** Frame stats for the dev overlay and perf checks. */
+  stats(): { fps: number; calls: number; triangles: number; quality: QualityLevel; programs: number; particles: number; lights: number } {
     const info = this.renderer.info;
-    return { fps: this.governor.fps, calls: info.render.calls, triangles: info.render.triangles, quality: this.quality.level, programs: info.programs?.length ?? 0 };
+    return {
+      fps: Math.round(this.governor.fps * 10) / 10,
+      calls: info.render.calls,
+      triangles: info.render.triangles,
+      quality: this.quality.level,
+      programs: info.programs?.length ?? 0,
+      particles: this.vfx.particleCount(),
+      lights: this.lights.all.length,
+    };
   }
 
-  private buildLevel(): void {
-    this.materials = buildMaterials(this.quality.level, 24, 16);
-    this.level = buildLevel(this.materials, this.quality.level === "low" ? 2 : 8);
-    this.scene.add(this.level.group);
-  }
-
-  private buildViewGun(): THREE.Group {
-    const g = new THREE.Group();
-    const metal = new THREE.MeshStandardMaterial({ color: 0x2c333f, metalness: 0.9, roughness: 0.3 });
-    const accent = new THREE.MeshStandardMaterial({ color: 0x3de0ff, emissive: 0x3de0ff, emissiveIntensity: 0.8 });
-    const slide = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.36), metal);
-    slide.position.set(0, 0, -0.12);
-    g.add(slide);
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.08), metal);
-    grip.position.set(0, -0.1, 0.02);
-    grip.rotation.x = 0.25;
-    g.add(grip);
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.012, 0.3), accent);
-    stripe.position.set(0, 0.03, -0.12);
-    g.add(stripe);
-    g.scale.setScalar(0.55);
-    g.position.set(0.17, -0.15, -0.36);
-    return g;
-  }
+  // ---------- players ----------
 
   /** Ensure one avatar per remote player, remove leavers. */
   syncAvatars(players: PlayerView[], me: string, seatOf: (userId: string) => number, nameOf: (userId: string) => string): void {
@@ -299,7 +220,7 @@ export class World {
       if (p.userId === me) continue;
       seen.add(p.userId);
       if (!this.avatars.has(p.userId)) {
-        const avatar = new Avatar(SEAT_COLORS[seatOf(p.userId) % SEAT_COLORS.length] ?? 0xffffff, nameOf(p.userId));
+        const avatar = new Avatar(this.materials, seatOf(p.userId), nameOf(p.userId));
         this.avatars.set(p.userId, avatar);
         this.scene.add(avatar.root);
       }
@@ -307,94 +228,189 @@ export class World {
     for (const [id, avatar] of this.avatars) {
       if (!seen.has(id)) {
         this.scene.remove(avatar.root);
+        avatar.dispose();
         this.avatars.delete(id);
+        this.strides.delete(id);
       }
     }
   }
 
-  placeAvatar(userId: string, p: { x: number; y: number; z: number; yaw: number }, alive: boolean, invulnerable: boolean, weapon: WeaponId): void {
-    this.avatars.get(userId)?.update(p, alive, invulnerable, weapon);
+  placeAvatar(userId: string, p: { x: number; y: number; z: number; yaw: number }, alive: boolean, invulnerable: boolean, weapon: WeaponId, charging = false): void {
+    const avatar = this.avatars.get(userId);
+    if (!avatar) return;
+    avatar.update(p, alive, invulnerable, weapon, charging, performance.now(), this.frameDt);
+    if (!alive) return;
+    let s = this.strides.get(userId);
+    if (!s) this.strides.set(userId, (s = { x: p.x, z: p.z, acc: 0 }));
+    this.stride(s, p);
   }
+
+  /** Footstep dust (or a puddle splash) every ~1.5 m of ground travel. */
+  private stride(s: Stride, p: Vec3): void {
+    const d = Number.isNaN(s.x) ? 0 : Math.hypot(p.x - s.x, p.z - s.z);
+    s.x = p.x;
+    s.z = p.z;
+    if (d > 1.5) return; // respawn teleport
+    s.acc += d;
+    if (s.acc > 1.5 && p.y < 0.05) {
+      s.acc = 0;
+      this.vfx.footstep(p);
+    }
+  }
+
+  // ---------- Lance ----------
 
   setLance(lance: LanceView, time: number): void {
     const at: Vec3 | null = lance.state === "pedestal" || lance.state === "dropped" ? lance.position : null;
     this.pedestalLance.visible = at !== null;
-    this.lights.pedestal.intensity = at ? 30 : 0;
+    const onPedestal = lance.state === "pedestal";
+    if (onPedestal && this.lastLance !== null && this.lastLance !== "pedestal") this.pedestal.pulse(time);
+    this.lastLance = lance.state;
+    this.pedestal.setAvailable(onPedestal ? 1 : 0, time);
+    this.lights.pedestal.intensity = onPedestal ? 45 + Math.sin(time * 3) * 8 : at ? 25 : 4;
+    const ped = DRYDOCK_09.lancePedestal;
+    this.lights.pedestal.position.set(at?.x ?? ped.x, (at?.y ?? ped.y) + 1.3, at?.z ?? ped.z);
     if (at) {
-      this.pedestalLance.position.set(at.x, at.y + 1.1 + Math.sin(time * 2.2) * 0.08, at.z);
-      this.pedestalLance.rotation.y = time * 0.9;
-      this.lights.pedestal.position.set(at.x, at.y + 1.4, at.z);
+      this.pedestalLance.position.set(at.x, at.y + 1.25 + Math.sin(time * 2.2) * 0.07, at.z);
+      this.pedestalLance.rotation.set(0.12, time * 0.7, 0);
     }
   }
 
-  /** Visible 0.35s beam telegraph from a charging lance holder along their aim. */
-  setTelegraph(userId: string, from: Vec3 | null, dir: Vec3 | null, time: number): void {
-    let line = this.telegraphs.get(userId);
-    if (!from || !dir) {
-      if (line) line.visible = false;
-      return;
-    }
-    if (!line) {
-      line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
-        new THREE.LineBasicMaterial({ color: 0xff4d5e, transparent: true }),
-      );
-      this.telegraphs.set(userId, line);
-      this.scene.add(line);
-    }
-    line.visible = true;
-    const end = new THREE.Vector3(from.x + dir.x * AURIC_LANCE.range, from.y + dir.y * AURIC_LANCE.range, from.z + dir.z * AURIC_LANCE.range);
-    line.geometry.setFromPoints([new THREE.Vector3(from.x, from.y - 0.3, from.z), end]);
-    (line.material as THREE.LineBasicMaterial).opacity = 0.4 + 0.6 * Math.abs(Math.sin(time * 30));
+  /** Charging telegraph cone from a Lance holder along their aim. */
+  setTelegraph(userId: string, from: Vec3 | null, dir: Vec3 | null): void {
+    this.vfx.telegraph(userId, from, dir);
   }
 
-  addTracer(from: Vec3, to: Vec3, weapon: WeaponId, now: number): void {
-    const color = weapon === "lance" ? 0xffd36a : 0x9ff3ff;
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(from.x, from.y - 0.12, from.z), new THREE.Vector3(to.x, to.y, to.z)]),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1 }),
-    );
-    this.scene.add(line);
-    this.tracers.push({ line, until: now + (weapon === "lance" ? 500 : 90) });
+  // ---------- combat events ----------
+
+  /** A shot event from the server. `local` = fired by this client (the viewmodel already kicked). */
+  shot(e: { from: Vec3; to: Vec3; weapon: WeaponId; hitId: string | null; damage: number }, local: boolean, now: number): void {
+    const from = new THREE.Vector3(e.from.x, e.from.y, e.from.z);
+    const to = new THREE.Vector3(e.to.x, e.to.y, e.to.z);
+    const dir = to.clone().sub(from).normalize();
+    const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+    const drop = local ? 0.14 : 0.24;
+    const muzzle = from.clone().addScaledVector(dir, 0.55).addScaledVector(right, local ? 0.14 : 0.12);
+    muzzle.y -= drop;
+    if (e.weapon === "lance") {
+      if (local) this.viewModel.fire(now, "lance");
+      this.vfx.lanceBeam(muzzle, to, now);
+      this.flashUntil = now + 80;
+      this.flashWeapon = "lance";
+      this.lights.flash.position.copy(muzzle).lerp(to, 0.08);
+      this.post.kick(now, 1, 320);
+    } else {
+      if (!local) this.vfx.muzzle(muzzle, now);
+      this.vfx.tracer(muzzle, to, now);
+    }
+    if (e.hitId) {
+      this.vfx.impact(e.to, null, now, true);
+      if (e.damage > 0) this.avatars.get(e.hitId)?.hit(now);
+    } else {
+      this.vfx.impact(e.to, surfaceNormal(e.to, DRYDOCK_09.boxes), now, false);
+    }
+  }
+
+  /** Elimination burst; chromatic fringe only when the local player is involved. */
+  elimination(at: Vec3 | null, weapon: WeaponId, involvesMe: boolean, now: number): void {
+    if (at) this.vfx.elimination(at, weapon === "lance");
+    if (involvesMe) this.post.kick(now, weapon === "lance" ? 1 : 0.6, 380);
+  }
+
+  /** 40 ms camera punch when the local player is hit. */
+  hurt(now: number): void {
+    this.punchUntil = now + 40;
+    this.punchRoll = (Math.random() - 0.5) * 0.02;
   }
 
   localFire(now: number, weapon: WeaponId): void {
+    this.viewModel.fire(now, weapon);
     if (weapon === "kestrel") {
-      this.muzzleUntil = now + 50;
-      this.kick = 1;
+      this.flashUntil = now + 45;
+      this.flashWeapon = "kestrel";
     }
   }
 
-  render(eye: Vec3, yaw: number, pitch: number, weapon: WeaponId, showViewModel: boolean, now: number): void {
-    this.camera.position.set(eye.x, eye.y, eye.z);
-    this.camera.rotation.set(pitch, yaw, 0, "YXZ");
+  // ---------- frame ----------
+
+  render(eye: Vec3, yaw: number, pitch: number, weapon: WeaponId, showViewModel: boolean, now: number, local?: LocalView): void {
+    const dt = Math.min(0.1, Math.max(0.001, (now - this.lastRender) / 1000));
+    this.frameDt = dt;
+    this.lastRender = now;
+    const time = now / 1000;
+
+    // Landing dip from fall speed at touchdown; local footsteps.
+    if (local) {
+      if (local.grounded && !this.wasGrounded && this.lastVy < -3) {
+        this.dipV -= Math.min(0.9, -this.lastVy * 0.06);
+        this.viewModel.land(-this.lastVy);
+      }
+      this.wasGrounded = local.grounded;
+      this.lastVy = local.vy;
+      if (showViewModel && local.grounded) this.stride(this.localStride, { x: eye.x, y: eye.y - 1.6, z: eye.z });
+    }
+    this.dipV += (-this.dip * 160 - this.dipV * 15) * dt;
+    this.dip += this.dipV * dt;
+
+    const punch = now < this.punchUntil ? (this.punchUntil - now) / 40 : 0;
+    this.camera.position.set(eye.x, eye.y + this.dip * 0.08, eye.z);
+    this.camera.rotation.set(pitch + punch * 0.018, yaw, this.punchRoll * punch, "YXZ");
     this.viewCamera.position.copy(this.camera.position);
     this.viewCamera.quaternion.copy(this.camera.quaternion);
     this.sky.position.copy(this.camera.position);
-    this.sky.material.uniforms.uTime!.value = now / 1000;
-    this.level.update(now / 1000);
-    this.viewGun.visible = showViewModel && weapon === "kestrel";
-    this.viewLance.visible = showViewModel && weapon === "lance";
-    this.kick *= 0.82;
-    this.viewGun.position.z = -0.36 + this.kick * 0.04;
-    this.viewGun.rotation.x = this.kick * 0.25;
-    const muzzleOn = now < this.muzzleUntil;
-    this.lights.muzzle.intensity = muzzleOn ? 60 : 0;
-    if (muzzleOn) this.lights.muzzle.position.copy(this.camera.localToWorld(new THREE.Vector3(0.25, -0.15, -0.8)));
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const t = this.tracers[i];
-      if (!t) continue;
-      if (now >= t.until) {
-        this.scene.remove(t.line);
-        t.line.geometry.dispose();
-        this.tracers.splice(i, 1);
-      }
+    this.sky.material.uniforms.uTime!.value = time;
+    this.level.update(time);
+
+    // Viewmodel feel from look deltas and ground speed.
+    let dYaw = yaw - this.lastYaw;
+    while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+    while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+    const dPitch = pitch - this.lastPitch;
+    this.lastYaw = yaw;
+    this.lastPitch = pitch;
+    const stride = this.strideSpeed(eye, dt);
+    this.viewModel.update(now, dt, {
+      weapon,
+      visible: showViewModel,
+      reloading: local?.reloading ?? false,
+      charging: local?.charging ?? false,
+      stride: local?.grounded ? stride : 0,
+      lookDX: (dYaw / dt) * 8,
+      lookDY: (dPitch / dt) * 8,
+    });
+
+    // Muzzle and Lance flash lights (fixed light count; only intensity changes).
+    const flashing = now < this.flashUntil;
+    this.lights.muzzle.intensity = flashing && this.flashWeapon === "kestrel" ? 25 : 0;
+    if (flashing && this.flashWeapon === "kestrel") this.lights.muzzle.position.copy(this.camera.localToWorld(new THREE.Vector3(0.25, -0.05, -1.4)));
+    this.lights.flash.intensity = flashing && this.flashWeapon === "lance" ? 900 : Math.max(0, this.lights.flash.intensity * 0.8 - 1);
+
+    // Beacon flare, gated by a cheap ray test against the map boxes.
+    if (now > this.flareCheckAt) {
+      this.flareCheckAt = now + 120;
+      const o = this.camera.position;
+      const d = this.level.beacon.clone().sub(o);
+      const dist = d.length();
+      d.normalize();
+      const dir = { x: d.x, y: d.y, z: d.z };
+      const origin = { x: o.x, y: o.y, z: o.z };
+      // Walls are rendered lower than their collision height on the water side, so skip them.
+      this.flareVisible = !DRYDOCK_09.boxes.some((b) => b.kind !== "wall" && b.kind !== "floor" && rayAabb(origin, dir, b, dist) !== null);
     }
-    const dt = Math.min(0.1, (now - this.lastRender) / 1000);
-    this.lastRender = now;
-    this.post.update(now, 0);
+    this.flare.visible = this.flareVisible && (time * 0.8) % 1 < 0.35;
+
+    this.vfx.update(now, this.camera);
+    this.post.update(now, punch);
     this.renderer.info.reset();
     this.post.render(dt);
     this.governor.tick(now, showViewModel);
+  }
+
+  private strideSpeed(eye: Vec3, dt: number): number {
+    const d = Number.isNaN(this.lastEye.x) ? 0 : Math.hypot(eye.x - this.lastEye.x, eye.z - this.lastEye.z);
+    this.lastEye.set(eye.x, eye.y, eye.z);
+    const v = d > 1 ? 0 : d / dt / 6.5;
+    this.strideK += (Math.min(1, v) - this.strideK) * Math.min(1, dt * 8);
+    return this.strideK;
   }
 }

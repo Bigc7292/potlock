@@ -239,7 +239,7 @@ export function corrugatedSet(aniso: number, size = 512): TexSet {
       const ribH = Math.pow(Math.abs(rib), 0.6) * Math.sign(rib);
       const chip = N.fbm(u, v, 16, 4);
       const runs = N2.fbm(u * 3, v * 0.25, 8, 3); // vertical rust runs
-      const rust = smooth(0.58, 0.72, chip * 0.6 + runs * 0.5 + (1 - v) * 0.08);
+      const rust = smooth(0.62, 0.76, chip * 0.6 + runs * 0.5 + (1 - v) * 0.08) * 0.85;
       const grime = N2.fbm(u, v, 4, 3);
       const paint = 0.62 + (grime - 0.5) * 0.25;
       t.r = mix(paint, RUST[0] * 1.6, rust);
@@ -250,7 +250,7 @@ export function corrugatedSet(aniso: number, size = 512): TexSet {
       t.metal = mix(0.35, 0.7, rust);
       t.ao = 0.75 + 0.25 * (ribH * 0.5 + 0.5);
     },
-    { w: size, h: size, normalStrength: 5, anisotropy: aniso },
+    { w: size, h: size, normalStrength: 3, anisotropy: aniso },
   );
 }
 
@@ -452,14 +452,14 @@ export function floorSet(layout: FloorLayout, aniso: number, pxPerMetre: number)
       }
       wet = Math.max(wet, seam * 0.6);
       const damp = smooth(0.45, 0.7, big) * 0.5;
-      const k = 1.1 + (Math.abs(plateTone) - 0.5) * 0.12 + (big - 0.5) * 0.35 + (agg - 0.5) * 0.18 - stain * 0.35;
+      const k = 0.82 + (Math.abs(plateTone) - 0.5) * 0.12 + (big - 0.5) * 0.35 + (agg - 0.5) * 0.18 - stain * 0.35;
       const darken = 1 - wet * 0.45 - damp * 0.15;
       t.r = CONCRETE[0] * k * darken * (1 - seam * 0.7);
       t.g = CONCRETE[1] * k * darken * (1 - seam * 0.7);
       t.b = CONCRETE[2] * k * darken * (1 - seam * 0.7) * 1.02;
       t.h = 0.6 + agg * 0.12 + big * 0.1 - seam * 0.5 - wet * 0.12;
       if (wet > 0.5) t.h = mix(t.h, 0.48, (wet - 0.5) * 2); // standing water is flat
-      t.rough = Math.max(0.04, mix(0.52 - damp * 0.12 + (agg - 0.5) * 0.1, 0.05, wet));
+      t.rough = Math.max(0.04, mix(0.46 - damp * 0.14 + (agg - 0.5) * 0.1, 0.05, wet));
       t.metal = 0;
       t.ao = 1 - seam * 0.4;
     },

@@ -53,7 +53,7 @@ function allLayers<T extends THREE.Object3D>(o: T): T {
 
 export function buildLightRig(scene: THREE.Scene, shadowMapSize: number): LightRig {
   const all: THREE.Light[] = [];
-  const hemi = allLayers(new THREE.HemisphereLight(0x2a3a52, 0x0c0b0a, 1.1));
+  const hemi = allLayers(new THREE.HemisphereLight(0x2a3a52, 0x0c0b0a, 1.6));
   scene.add(hemi);
   all.push(hemi);
 
